@@ -1427,8 +1427,6 @@ def _rotate_key() -> bool:
 def resolve_execution(args) -> "ExecutionSettings":
     from pi_rpc import ExecutionSettings
     backend = getattr(args, "backend", "claude")
-    if backend == "pi" and getattr(args, "skip_permissions", False):
-        raise FGError("--skip-permissions is Claude-only; use --pi-policy autonomous explicitly")
     if backend == "pi" and getattr(args, "command", None) in ("bench", "sweep", "command", "fleet"):
         raise FGError("Pi does not support legacy competition/tmux orchestration; use sapper worker")
     model = getattr(args, "model", None)
@@ -1437,7 +1435,7 @@ def resolve_execution(args) -> "ExecutionSettings":
     if backend == "claude":
         model = model or os.environ.get("SAPPER_MODEL", "sonnet")
     return ExecutionSettings(backend, model, getattr(args, "provider", None),
-        getattr(args, "pi_policy", "readonly"), getattr(args, "pi_bin", None) or os.environ.get("SAPPER_PI_BIN", "pi"))
+        getattr(args, "pi_bin", None) or os.environ.get("SAPPER_PI_BIN", "pi"))
 
 
 def run_agent(prompt, *, execution=None, store=None, **kwargs) -> dict:
@@ -4576,7 +4574,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=int, default=int(os.environ.get("SAPPER_TIMEOUT", "600")))
     sp.add_argument("--templates", default=None, help="templates dir (default: <store>/../templates or SKILL dir)")
     sp.add_argument("--skip-permissions", action="store_true",
-                    help="pass --dangerously-skip-permissions to the executor")
+                    help="pass --dangerously-skip-permissions to Claude; no-op for Pi")
     sp.add_argument("--dry-run", action="store_true", help="print the rendered prompt and exit")
     sp.add_argument("--claim", action="store_true", help="(explore) claim the intent first")
     sp.add_argument("--intent", default=None, help="(verify) intent id to verify")
@@ -4795,7 +4793,6 @@ def build_parser() -> argparse.ArgumentParser:
         parser = sub.choices[name]
         parser.add_argument("--backend", choices=["claude", "pi"], default="pi" if name == "worker" else "claude")
         parser.add_argument("--provider", default=None)
-        parser.add_argument("--pi-policy", choices=["readonly", "autonomous"], default="readonly")
         parser.add_argument("--pi-bin", default=None, help="Pi executable; defaults to SAPPER_PI_BIN or pi")
     return p
 

@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
-from pi_rpc import ExecutionSettings, PiSession
+from pi_rpc import ExecutionSettings, PiError, PiSession
 from pi_workers import pid_exists
 
 
@@ -35,18 +35,28 @@ class Provider(BaseHTTPRequestHandler):
         messages = payload["messages"]
         users = [m for m in messages if m["role"] == "user"]
         # Pi appends graph context as a user message after the actual business prompt.
-        prompt = next((json.dumps(m["content"], ensure_ascii=False) for m in reversed(users)
-                       if "<sapper-graph-data>" not in json.dumps(m["content"])), "")
-        tools = [m for m in messages if m["role"] == "tool"]
+        prompt_index = next((i for i in range(len(messages) - 1, -1, -1)
+                             if messages[i]["role"] == "user" and
+                             "<sapper-graph-data>" not in json.dumps(messages[i]["content"])), -1)
+        prompt = json.dumps(messages[prompt_index]["content"], ensure_ascii=False)
+        tools = [m for m in messages[prompt_index + 1:] if m["role"] == "tool"]
         tool = None
-        if "VERIFY_DENY" in prompt or "VERIFY_ALLOW" in prompt:
-            marker = "denied.txt" if "VERIFY_DENY" in prompt else "allowed.txt"
-            if not tools:
-                tool = dict(id="call_local", type="function", function=dict(name="write",
-                    arguments=json.dumps(dict(path=marker, content="benign fixture"))))
+        if "VERIFY_NATIVE_" in prompt and ("You are" not in prompt or "You are an executor" in prompt):
+            tag = re.search(r"VERIFY_NATIVE_(DIRECT|DISPATCH|WORKER)", prompt).group(1).lower()
+            steps = [
+                ("bash", dict(command=f"printf shell-ok > {tag}-shell.txt && sapper --version")),
+                ("write", dict(path=f"{tag}-write.txt", content="before edit")),
+                ("edit", dict(path=f"{tag}-write.txt", oldText="before edit", newText="after edit")),
+                ("fixture_tool", {}),
+            ]
+            if len(tools) < len(steps):
+                name, arguments = steps[len(tools)]
+                tool = dict(id=f"call_native_{len(tools)}", type="function",
+                            function=dict(name=name, arguments=json.dumps(arguments)))
                 text = ""
             else:
-                text = "DENIED" if "denied" in json.dumps(tools[-1]).lower() else "WROTE"
+                text = json.dumps(dict(accepted=True, data=dict(title="Native result",
+                    description="Observed native shell, write, edit and custom tool effects", kind="note")))
         elif "VERIFY_GRAPH_CLI" in prompt:
             if not tools:
                 target = re.search(r"\bi[0-9]+\b", prompt).group()
@@ -158,37 +168,112 @@ def verify(executable):
                 cli("setup", "--backend", "pi", "--goal", "LOCAL_GRAPH_SENTINEL")
                 cli("setup", "--backend", "pi", "--goal", "LOCAL_GRAPH_SENTINEL")
                 cli("fact", "benign seed")
-                settings = ExecutionSettings("pi", "local", "fixture", "readonly", executable)
-                session = PiSession(settings, cwd, base / "readonly")
+                # Isolation and native trust are fixture configuration, never launcher overrides.
+                (config / "trust.json").write_text(json.dumps({str(cwd): True}))
+                (config / "AGENTS.md").write_text("GLOBAL_CONTEXT_SENTINEL")
+                (cwd / ".pi/APPEND_SYSTEM.md").write_text("NATIVE_APPEND_SENTINEL")
+                (config / "extensions").mkdir()
+                (config / "extensions/fixture.ts").write_text("""
+import { Type } from "@earendil-works/pi-ai";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+export default function(pi) {
+  pi.registerTool({name: "fixture_tool", label: "Fixture", description: "Benign fixture tool",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _signal, _update, ctx) {
+      writeFileSync(join(ctx.cwd, "custom-tool.txt"), "custom-ok");
+      return {content: [{type: "text", text: "CUSTOM_TOOL_OK"}], details: {}};
+    }});
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (event.prompt?.includes("VERIFY_DIALOG")) await ctx.ui.confirm("Fixture permission", "Allow?");
+  });
+}
+""")
+                (cwd / ".pi/extensions").mkdir()
+                (cwd / ".pi/extensions/project.ts").write_text("""
+export default function(pi) {
+  pi.on("before_agent_start", event => {
+    event.systemPromptOptions.appendSystemPrompt += "\\nPROJECT_EXTENSION_SENTINEL";
+  });
+}
+""")
+                (config / "skills/fixture").mkdir(parents=True)
+                (config / "skills/fixture/SKILL.md").write_text(
+                    "---\nname: fixture\ndescription: USER_SKILL_SENTINEL\n---\nLocal fixture skill\n")
+                (config / "prompts").mkdir()
+                (config / "prompts/fixture.md").write_text("USER_TEMPLATE_SENTINEL")
+                settings = ExecutionSettings("pi", "local", "fixture", executable)
+
+                def native_effects(tag):
+                    assert (cwd / f"{tag}-shell.txt").read_text() == "shell-ok"
+                    assert (cwd / f"{tag}-write.txt").read_text() == "after edit"
+                    assert (cwd / "custom-tool.txt").read_text() == "custom-ok"
+                    (cwd / "custom-tool.txt").unlink()
+
+                session = PiSession(settings, cwd, base / "native", append_system="SAPPER_APPEND_SENTINEL")
                 try:
                     assert session.run("VERIFY_CONTEXT", 15)["result"] == "CONTEXT_OK"
+                    assert sum("<sapper-graph-data>" in json.dumps(m) for m in Provider.requests[-1]["messages"]) == 1
                     start = len(Provider.requests)
-                    assert session.run("VERIFY_DENY", 15)["result"] == "DENIED"
-                    assert not (cwd / "denied.txt").exists()
-                    assert len(Provider.requests) >= start + 2, "real tool call did not reach another provider turn"
+                    session.run("VERIFY_NATIVE_DIRECT", 15)
+                    native_effects("direct")
+                    assert len(Provider.requests) == start + 5
+                    messages = Provider.requests[start]["messages"]
+                    for sentinel in ("GLOBAL_CONTEXT_SENTINEL", "Unrelated project instructions",
+                                     "NATIVE_APPEND_SENTINEL", "SAPPER_APPEND_SENTINEL",
+                                     "PROJECT_EXTENSION_SENTINEL", "USER_SKILL_SENTINEL"):
+                        assert sentinel in json.dumps(messages), sentinel
+                    commands = session.request("get_commands")["commands"]
+                    names = {c["name"] for c in commands}
+                    assert {"skill:sapper-setup", "skill:fixture", "fixture"} <= names, names
                     events = session.request("get_messages")["messages"]
-                    assert any(m.get("role") == "toolResult" and m.get("isError") for m in events)
+                    assert any(m.get("role") == "toolResult" and "sapper 1.0.0" in json.dumps(m) for m in events)
                     assert Path(session.session_file).is_file()
-                    readonly_session = session.session_file
+                    native_session = session.session_file
                 finally:
                     session.close()
                 assert session.proc.poll() == 0
-                assert "LOCAL_GRAPH_SENTINEL" in Path(readonly_session).read_text()
-                print("PASS real Pi graph context, readonly denial, final settlement, session persistence, EOF cleanup")
+                assert "LOCAL_GRAPH_SENTINEL" in Path(native_session).read_text()
+                print("PASS default bash/write/edit/custom tool effects, native context/append/skills/templates, graph deduplication, settlement, persistence")
 
-                autonomous = ExecutionSettings("pi", "local", "fixture", "autonomous", executable)
-                session = PiSession(autonomous, cwd, base / "autonomous")
+                original_settings = (config / "settings.json").read_text()
+                selected = json.loads(original_settings)
+                selected["defaultTools"] = ["read"]
+                (config / "settings.json").write_text(json.dumps(selected))
+                session = PiSession(settings, cwd, base / "user-tools")
                 try:
-                    assert session.run("VERIFY_ALLOW", 15)["result"] == "WROTE"
-                    assert (cwd / "allowed.txt").read_text() == "benign fixture"
+                    session.run("VERIFY_TOOL_SELECTION", 15)
+                    names = {t["function"]["name"] for t in Provider.requests[-1]["tools"]}
+                    assert "read" in names and not names.intersection({"bash", "edit", "write"}), names
                 finally:
                     session.close()
-                session = PiSession(autonomous, cwd, base / "cli-discovery")
+                    (config / "settings.json").write_text(original_settings)
+                (config / "trust.json").write_text(json.dumps({str(cwd): False}))
+                session = PiSession(settings, cwd, base / "untrusted-project")
+                try:
+                    session.run("VERIFY_PROJECT_TRUST", 15)
+                    assert "PROJECT_EXTENSION_SENTINEL" not in json.dumps(Provider.requests[-1]["messages"])
+                    assert "GLOBAL_CONTEXT_SENTINEL" in json.dumps(Provider.requests[-1]["messages"])
+                finally:
+                    session.close()
+                    (config / "trust.json").write_text(json.dumps({str(cwd): True}))
+                session = PiSession(settings, cwd, base / "dialog")
+                try:
+                    try:
+                        session.run("VERIFY_DIALOG", 15)
+                        raise AssertionError("native confirmation silently accepted")
+                    except PiError as exc:
+                        assert "confirm" in str(exc) and "unsupported" in str(exc), exc
+                finally:
+                    session.close()
+                print("PASS user defaultTools, native saved distrust, and visible unsupported extension dialog")
+
+                session = PiSession(settings, cwd, base / "cli-discovery")
                 try:
                     assert session.run("VERIFY_CLI", 15)["result"] == "CLI_FOUND"
                 finally:
                     session.close()
-                session = PiSession(autonomous, cwd, base / "cancellation")
+                session = PiSession(settings, cwd, base / "cancellation")
                 try:
                     session.begin("VERIFY_CANCEL", 15)
                     helper_file = cwd / "helper.pid"
@@ -199,41 +284,31 @@ def verify(executable):
                     session.close()
                 wait_for(lambda: not pid_exists(helper_pid), "real Pi aborted shell helper cleanup")
                 assert session.proc.poll() == 0
-                print("PASS explicit autonomous tool effects, bundled CLI discovery, and running shell cancellation cleanup")
+                print("PASS bundled CLI discovery and running shell cancellation cleanup")
 
                 opts = ["--backend", "pi", "--pi-bin", executable, "--model", "fixture/local", "--timeout", "20"]
                 assert "reason" in cli("dispatch", "reason", *opts)
                 assert "reason" in cli("dispatch", "reason", "--backend", "pi", "--pi-bin", executable, "--timeout", "20")
                 assert "blindspot" in cli("dispatch", "blindspot", *opts)
                 assert "brainstorm" in cli("dispatch", "brainstorm", *opts)
-                iid = cli("intent", "--from", "f001", "Observe the local deterministic fixture").strip()
-                assert "explore" in cli("dispatch", iid, "--claim", *opts)
+                iid = cli("intent", "--from", "f001", "VERIFY_NATIVE_DISPATCH Observe the local deterministic fixture").strip()
+                assert "explore" in cli("dispatch", iid, "--claim", "--skip-permissions", *opts)
+                native_effects("dispatch")
+                assert "NATIVE_APPEND_SENTINEL" in json.dumps(Provider.requests[-1]["messages"])
                 assert "VERIFIED" in cli("dispatch", "verify", "--intent", iid, *opts)
                 cli("auto", "--max-steps", "1", *opts)
                 cli("dispatch", "reason", "--backend", "pi", "--pi-bin", executable, "--model", "no-such-local-model", ok=False)
                 print("PASS public Pi reason/explore/verify/blindspot/brainstorm/auto and unknown-model refusal")
 
-                package = subprocess.run([executable, "--mode", "rpc", "--offline", "--no-approve",
-                    "--no-extensions", "--no-skills", "--no-mcp", "--no-context-files", "--no-themes",
-                    "--no-prompt-templates", "--no-session", "--session-dir", str(base / "package"), "-e", str(ROOT)],
+                package = subprocess.run([executable, "--mode", "rpc", "--no-session",
+                    "--session-dir", str(base / "package"), "-e", str(ROOT)],
                     input='{"type":"get_commands","id":"commands"}\n', capture_output=True, text=True,
                     cwd=cwd, timeout=20)
                 assert package.returncode == 0, package.stderr
                 records = [json.loads(line) for line in package.stdout.split("\n") if line]
                 commands = next(r["data"]["commands"] for r in records if r.get("id") == "commands")
-                assert any(c["name"] == "sapper-policy" for c in commands), commands
                 assert any(c["name"] == "skill:sapper-setup" for c in commands), commands
-                project_package = subprocess.run([executable, "--mode", "rpc", "--offline", "--approve",
-                    "--no-mcp", "--no-context-files", "--no-themes", "--no-prompt-templates", "--no-session",
-                    "--session-dir", str(base / "project-package")],
-                    input='{"type":"get_commands","id":"commands"}\n', capture_output=True, text=True,
-                    cwd=cwd, timeout=20)
-                assert project_package.returncode == 0, project_package.stderr
-                project_records = [json.loads(line) for line in project_package.stdout.split("\n") if line]
-                project_commands = next(r["data"]["commands"] for r in project_records if r.get("id") == "commands")
-                assert any(c["name"] == "sapper-policy" for c in project_commands)
-                assert any(c["name"] == "skill:sapper-setup" for c in project_commands)
-                print("PASS actual Pi explicit and project package extension and skill loading")
+                print("PASS actual Pi explicit and project package skill loading")
 
                 runtime = cwd / ".sapper-runtime"
                 pids = []
@@ -241,7 +316,7 @@ def verify(executable):
                 worker("up", "--max-workers", "2", "--seconds", "180")
                 try:
                     first = worker("spawn", "--pi-bin", executable, "--model", "fixture/local")
-                    second = worker("spawn", "--pi-bin", executable, "--model", "fixture/local", "--pi-policy", "autonomous")
+                    second = worker("spawn", "--pi-bin", executable, "--model", "fixture/local")
                     pids.extend([first["pid"], second["pid"]])
                     assert first["id"] != second["id"]
                     worker("spawn", "--pi-bin", executable, ok=False)
@@ -276,12 +351,20 @@ def verify(executable):
                     assert cli_done["result"] == "GRAPH_CLI_DONE", cli_done
                     cli_intent = json.loads((cwd / ".sapper/intents" / f"{cli_target}.json").read_text())
                     assert cli_intent["worker"] == second["id"] and cli_intent["to"]
+                    worker("message", second["id"], "VERIFY_NATIVE_WORKER")
+                    wait_for(lambda: completed(second["id"]), "native worker effects")
+                    native_effects("worker")
                     before = worker("list")
                     assert len(worker("board")["workers"]) == 2
                     worker("down")
                     assert not (runtime / "rpc.sock").exists()
                     assert all(not pid_exists(pid) for pid in pids), "Pi child survived supervisor shutdown"
+                    registry_path = runtime / "workers.json"
+                    registry = json.loads(registry_path.read_text())
+                    registry["workers"][first["id"]]["settings"]["policy"] = "readonly"
+                    registry_path.write_text(json.dumps(registry))
                     worker("up", "--seconds", "999", "--max-workers", "9")
+                    assert "policy" not in json.loads(registry_path.read_text())["workers"][first["id"]]["settings"]
                     after = worker("list")
                     assert after["deadline"] == before["deadline"] and after["cap"] == 2
                     restart = worker("resume", first["id"])

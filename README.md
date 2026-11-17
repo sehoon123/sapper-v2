@@ -26,12 +26,12 @@ export PATH="$PWD/bin:$PATH"
 cd /path/to/your-project
 sapper setup --backend pi --goal "Document the local project"
 sapper status
-pi --approve
+pi
 ```
 
-Review the package and project configuration before using `--approve`. This starts Pi with Sapper's read-only tool policy. It does not grant shell or edit access. The Python graph and Claude backend remain available.
+Sapper preserves ordinary Pi execution, including shell/file access and your configured tools, extensions, instructions, MCP, provider environment, and native project-trust decisions. There is no Sapper permission mode or extra tool opt-in. Review project resources in Pi's normal trust flow; managed RPC cannot answer interactive extension dialogs and fails visibly instead of approving them. The Python graph and Claude backend remain available.
 
-See [the English Pi guide](docs/pi.md) or [한국어 Pi 사용법](docs/pi.ko.md) for provider setup, dispatch, worker management, and isolation requirements.
+See [the English Pi guide](docs/pi.md) or [한국어 Pi 사용법](docs/pi.ko.md) for provider setup, dispatch, worker management, user controls, and remaining legacy non-parity.
 
 ## Meet sapper in 60 seconds
 

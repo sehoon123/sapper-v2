@@ -32,11 +32,10 @@ class ExecutionSettings:
     backend: str = "claude"
     model: str | None = None
     provider: str | None = None
-    policy: str = "readonly"
     executable: str = "pi"
 
 
-POLICY = Path(__file__).resolve().parents[1] / "pi" / "extension.ts"
+EXTENSION = Path(__file__).resolve().parents[1] / "pi" / "extension.ts"
 MAX_RECORD = 4 * 1024 * 1024
 
 
@@ -54,12 +53,10 @@ class PiSession:
                  *, session_file: str | None = None, worker_id: str | None = None,
                  store_path: Path | None = None, append_system: str | None = None, timeout: float = 30,
                  on_spawn=None):
-        if settings.policy not in ("readonly", "autonomous"):
-            raise PiError("Pi policy must be readonly or autonomous")
         if not math.isfinite(timeout) or timeout <= 0:
             raise PiError("Pi timeout must be positive and finite")
-        if not POLICY.is_file():
-            raise PiError("required Pi policy extension is missing")
+        if not EXTENSION.is_file():
+            raise PiError("required Sapper Pi extension is missing")
         self.generation = uuid.uuid4().hex
         self.state = Lifecycle.STARTING
         self.responses = {}
@@ -71,21 +68,19 @@ class PiSession:
         self.settled = None
         self.deadline = time.monotonic() + timeout
         session_dir = private_dir(session_dir)
-        argv = [settings.executable, "--mode", "rpc", "--offline", "--no-approve",
-                "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
-                "--no-context-files", "--no-mcp", "-e", str(POLICY),
-                "--session-dir", str(session_dir), "--tools", "read,grep,find,ls,bash,edit,write"]
+        argv = [settings.executable, "--mode", "rpc", "-e", str(EXTENSION),
+                "--session-dir", str(session_dir)]
         if session_file:
             if not Path(session_file).is_file():
                 raise PiError("recorded exact session file is missing")
             argv += ["--session", str(Path(session_file).resolve())]
-        if append_system:
-            argv += ["--append-system-prompt", append_system]
-        env = {**os.environ, "SAPPER_PI_POLICY": settings.policy, "PI_OFFLINE": "1",
+        env = {**os.environ,
                "SAPPER_STORE": str((store_path or cwd / ".sapper").resolve()),
-               "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0"}
+               "SAPPER_PI_APPEND_SYSTEM": append_system or ""}
         if worker_id:
             env["SAPPER_WORKER_ID"] = worker_id
+        else:
+            env.pop("SAPPER_WORKER_ID", None)
         self.selector = selectors.DefaultSelector()
         try:
             self.proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
@@ -100,12 +95,6 @@ class PiSession:
                 os.set_blocking(stream.fileno(), False)
             self.selector.register(self.proc.stdout, selectors.EVENT_READ, "stdout")
             self.selector.register(self.proc.stderr, selectors.EVENT_READ, "stderr")
-            commands = self.request("get_commands").get("commands", [])
-            if not isinstance(commands, list) or any(not isinstance(c, dict) for c in commands):
-                raise PiError("Pi returned invalid commands")
-            if not any(c.get("name") == "sapper-policy" and c.get("source") == "extension"
-                       and c.get("description") == f"sapper-policy-v1:{settings.policy}" for c in commands):
-                raise PiError("required Pi policy did not load")
             if settings.model:
                 models = self.request("get_available_models").get("models", [])
                 if not isinstance(models, list) or any(not isinstance(m, dict) for m in models):
@@ -214,6 +203,7 @@ class PiSession:
             raise PiError("Pi extension failed; refusing model results")
         elif kind == "extension_ui_request" and record.get("method") in ("select", "confirm", "input", "editor"):
             self._write(dict(type="extension_ui_response", id=record["id"], cancelled=True))
+            raise PiError(f"Pi extension interaction {record['method']!r} is unsupported by Sapper RPC; cancelled, not approved")
         elif self.state == Lifecycle.RUNNING:
             if kind == "message_end":
                 message = record.get("message")

@@ -46,10 +46,10 @@ sapper context
 
 처음 실행하면 `.sapper/`에 그래프를 만들고, 프로젝트의 `.pi/settings.json`에 Sapper 패키지 경로를 등록합니다. 기존 그래프가 있으면 유지합니다. 사용자 전역 Pi 설정, Claude 설정, `AGENTS.md`는 바꾸지 않습니다.
 
-패키지와 프로젝트 설정을 검토한 뒤 Pi에서 이 프로젝트의 리소스를 허용합니다.
+Pi를 실행하고 기본 신뢰 절차에서 패키지와 프로젝트 설정을 검토합니다. 관리형 RPC에서도 프로젝트 리소스를 사용하려면 Pi에 신뢰 결정을 저장합니다. Sapper는 승인이나 불신을 강제하지 않습니다. RPC에는 시작 시 신뢰 대화창이 없으므로, 아직 신뢰하지 않은 프로젝트 리소스는 Pi 기본 규칙에 따라 로드되지 않을 수 있습니다.
 
 ```sh
-pi --approve
+pi
 ```
 
 Pi에 다음과 같이 요청할 수 있습니다.
@@ -59,7 +59,7 @@ Sapper 그래프와 이 폴더의 README를 읽고 현재 목표와 다음 분�
 파일은 변경하지 말고 외부 주소에는 접속하지 마.
 ```
 
-Sapper extension이 현재 프로젝트의 그래프 컨텍스트를 Pi에 전달합니다. 기본 정책은 읽기 전용입니다. 모델의 shell 실행과 파일 수정은 차단하므로, 아래 `sapper` 명령은 일반 터미널에서 실행합니다. `--approve`는 프로젝트 리소스 로딩에 대한 승인이지 shell 권한 부여가 아닙니다.
+Sapper extension은 그래프 컨텍스트와 번들 CLI 경로를 제공합니다. 별도의 도구 허용 목록이나 shell 차단 정책은 없습니다. 일반 Pi와 마찬가지로 shell 실행, 파일 쓰기·수정, 사용자 도구를 사용할 수 있으며, 사용자가 설정한 도구 선택과 권한 extension은 그대로 적용됩니다. 아래 명령은 터미널 또는 shell을 사용할 수 있는 Pi에서 실행할 수 있습니다.
 
 ## 3. Pi로 그래프 작업 실행하기
 
@@ -81,7 +81,7 @@ sapper dispatch verify --intent i001 --backend pi
 sapper status
 ```
 
-검증된 최종 결과만 Sapper 그래프에 반영됩니다. 기본 읽기 전용 정책에서도 Sapper 자체의 그래프 기록은 가능합니다. 제한된 횟수로 자동 진행하려면 다음을 실행합니다.
+최종 결과는 기존 payload 검증과 intent 확인·점유 규칙을 통과한 뒤 Sapper 그래프에 반영됩니다. 제한된 횟수로 자동 진행하려면 다음을 실행합니다.
 
 ```sh
 sapper auto --backend pi --max-steps 2 --max-explore 1
@@ -124,14 +124,16 @@ sapper worker down
 
 세션 파일이 저장된 worker는 supervisor가 실행 중일 때 `sapper worker resume ID`로 재개할 수 있습니다. 같은 세션을 다시 열지만 중단된 작업을 자동 재실행하지 않습니다. 그래프와 실제 변경 사항을 확인한 뒤 새 메시지를 보냅니다.
 
-실행 기한과 worker 수 제한은 최초 시작 시 저장됩니다. supervisor를 재시작해도 초기화되지 않습니다. 새 예산은 별도 프로젝트 디렉터리에서 시작합니다. 복구가 거부되거나 `unresolved` 상태가 나오면 [영문 복구 안내](pi.md#recover-a-campaign)를 확인합니다.
+실행 기한과 사용자가 정한 양의 정수 worker 수 제한은 최초 시작 시 저장됩니다. 별도의 32개 상한은 없습니다. supervisor를 재시작해도 초기화되지 않습니다. 새 예산은 별도 프로젝트 디렉터리에서 시작합니다. 복구가 거부되거나 `unresolved` 상태가 나오면 [영문 복구 안내](pi.md#recover-a-campaign)를 확인합니다.
+
+기존 registry는 supervisor 잠금 안에서 폐기된 `settings.policy` 키만 제거합니다. 그 외 필드, 세션, generation, claim, 실행 기한과 worker 수는 유지됩니다(기존 재시작 상태 전이는 그대로 적용). 알 수 없는 실행 설정은 파일을 덮어쓰지 않고 실패합니다. 복구를 위해 세션을 삭제할 필요는 없습니다.
 
 ## 5. Pi 대화에서 worker를 직접 조율하기
 
-이 기능은 Pi가 shell을 실행해야 합니다. 필요한 파일만 제공한 컨테이너나 VM에서, 허가된 작업에만 사용합니다. 도구 정책은 OS 샌드박스가 아니므로 호스트 비밀키나 불필요한 네트워크 접근을 제공하지 않습니다.
+일반 Pi의 shell 기능을 사용하며 Sapper 전용 opt-in은 필요하지 않습니다. 사용자 도구 설정과 권한 extension은 계속 적용됩니다. Pi는 OS 샌드박스가 아니며 사용 가능한 파일·인증 정보·네트워크에 접근하거나 프로세스를 실행할 수 있습니다. 필요에 따라 별도 OS 사용자, 컨테이너 또는 VM과 적절한 파일·네트워크 범위를 사용합니다.
 
 ```sh
-SAPPER_PI_POLICY=autonomous pi --approve
+pi
 ```
 
 Pi에 다음과 같이 요청합니다.
@@ -139,12 +141,16 @@ Pi에 다음과 같이 요청합니다.
 ```text
 이 프로젝트의 로컬 코드와 문서를 분석해줘.
 Sapper worker를 최대 2개, 기한 15분으로 시작해.
-worker는 readonly 정책을 유지하고 README 분석과 테스트 구조 분석을 나눠 맡겨.
+worker에게 README 분석과 테스트 구조 분석을 나눠 맡겨.
 외부 주소에 접속하지 말고 파일을 변경하지 마.
 각 결과를 확인해 종합하고, 끝나면 worker down으로 정리해.
 ```
 
-이 환경 변수는 현재 대화형 Pi에만 적용됩니다. Sapper가 관리하는 자식 worker는 기본 읽기 전용을 유지합니다. 자식에게도 shell이나 수정 권한이 필요하다면 승인된 격리 환경에서 `worker spawn` 또는 `dispatch`에 `--pi-policy autonomous`를 별도로 지정합니다. Pi에서는 `--skip-permissions`를 사용하지 않습니다.
+관리형 Pi는 사용자 extension, skill, prompt template, theme, context/instruction(`APPEND_SYSTEM.md` 포함), MCP, provider 환경 변수와 Pi 기본 프로젝트 신뢰 결정을 그대로 사용합니다. Sapper는 offline, telemetry, version 설정을 강제로 바꾸지 않습니다. explore용 추가 지침도 기본 prompt 리소스를 대체하지 않고 덧붙입니다.
+
+공유 옵션 `--skip-permissions`는 Pi에서 호환성을 위한 **no-op**입니다. Pi에는 대응하는 core 도구 승인 생략 옵션이 없으며, 이 옵션으로 신뢰 결정이나 사용자 권한 extension의 대화창을 승인하지 않습니다. Claude에서는 기존 `--dangerously-skip-permissions` 전달을 유지합니다. 이전 `--pi-policy`, `SAPPER_PI_POLICY`, policy 명령은 제거되었으므로 스크립트에서 폐기된 옵션을 지웁니다.
+
+관리형 RPC에는 대화형 승인 중계가 없습니다. 로드된 extension이 `select`, `confirm`, `input`, `editor`를 요청하면 취소 응답을 보내고 **명확한 오류로 실행을 실패 처리**합니다. 시작 단계에도 동일하며, 취소를 성공으로 처리하거나 extension을 몰래 비활성화하지 않습니다. 알림은 표시되지 않을 수 있고 Pi RPC 자체의 custom TUI 기능도 제한됩니다. 상호작용이 필요하면 대화형 Pi를 쓰거나 해당 extension이 지원하는 비대화형 동작을 직접 설정합니다.
 
 ## 6. 프로젝트 연결 해제하기
 
@@ -160,9 +166,19 @@ supervisor를 시작한 적이 없다면 첫 명령은 생략합니다. `teardow
 ## 지원 범위 확인하기
 
 - Pi에서 `dispatch`, `auto`, `worker`를 사용할 수 있습니다.
-- 기존 `bench`, `sweep`, `command`, tmux `fleet`은 Pi를 지원하지 않습니다.
+- 기존 `bench`, `sweep`, `command`, tmux `fleet`, `docker/commander`는 Pi 백엔드가 아직 구현되지 않았습니다. 도구 권한 제한이 아니며 Claude 경로는 그대로입니다.
 - 무인 전략 commander, 실행 중 `steer/follow_up`, 대화형 승인 중계는 구현하지 않았습니다.
+- 정확한 모델 ID를 사용하며 Claude식 alias/fallback/키 교체는 하지 않습니다. Pi auto 실행 오류는 명확하게 실패 처리합니다.
+- 임의의 세션 전환·fork는 지원하지 않습니다. 정확한 소유 세션 복구, stale generation 거부, 이전 PID의 종료 확인과 protocol/context 크기 제한은 데이터·수명주기 불변 조건입니다.
 - Windows는 지원하지 않습니다. macOS의 supervisor 경로는 Unix socket 길이 제한 때문에 짧게 유지해야 합니다.
 - `.sapper-runtime/`에는 모델 입력·출력과 세션이 남을 수 있습니다. Git에 올리거나 다른 사용자에게 공유하지 않습니다.
 
-컨테이너 실행과 외부 모델 없는 검증 방법은 [영문 Pi 가이드](pi.md)를 참고합니다.
+외부 모델 없이 검증하려면 저장소에서 실행합니다.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify_pi.py
+git diff --check
+```
+
+verifier는 설치된 Pi 1.4.0과 localhost provider, 임시 HOME·설정·프로젝트만 사용합니다. 기본 bash/write/edit 및 사용자 도구, CLI, 사용자 리소스와 도구 선택, 신뢰 설정, 대화창 실패, public dispatch/worker, registry migration과 exact-session 복구·정리를 확인합니다. 테스트 격리 옵션은 production launcher에 적용하지 않습니다. 컨테이너 실행은 [영문 Pi 가이드](pi.md)를 참고합니다.

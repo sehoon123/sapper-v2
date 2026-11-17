@@ -25,12 +25,12 @@ To load the Pi package for one session, run `pi -e /absolute/path/to/sapper-v2`.
 sapper setup --backend pi --goal "Document the local example project"
 sapper status
 sapper context
-pi --approve
+pi
 ```
 
-Setup adds the package path to this project's `.pi/settings.json`. It does not change user-level Pi settings, credentials, Claude settings, or AGENTS.md. The extension adds the bundled `bin` directory to its process's PATH, so model-issued `sapper` commands need no global CLI install. Project trust is your decision. Review the package before approving it.
+Setup adds the package path to this project's `.pi/settings.json`. It does not change user-level Pi settings, credentials, Claude settings, or AGENTS.md. The extension adds the bundled `bin` directory to its process's PATH, so model-issued `sapper` commands need no global CLI install. Project trust is your decision. Review resources in Pi's normal trust flow and save the decision if managed RPC runs should load project resources. Sapper neither forces approval nor distrust; RPC has no startup trust prompt, so unknown project resources may remain unloaded under Pi's native rules.
 
-Global package installation is optional and explicit with `pi install /absolute/path/to/sapper-v2`. The extension's policy applies to that Pi process, including when installed globally. Do not install globally if you only want it in one project.
+Global package installation is optional and explicit with `pi install /absolute/path/to/sapper-v2`. The extension supplies graph context and bundled CLI discovery, not a tool policy. Do not install globally if you only want it in one project.
 
 Configure your provider using Pi's `/login`, its supported provider environment variable, or your own `models.json`. Sapper does not configure authentication or rotate Pi keys. `--model` accepts an exact model ID or `provider/id`. Use `--provider` to disambiguate a bare ID. Unknown or ambiguous models fail rather than falling back. Omitting `--model` uses Pi's selected default, never Claude's `sonnet` default or `SAPPER_MODEL`.
 
@@ -49,15 +49,15 @@ Replace the model and intent IDs with configured models and existing graph inten
 
 `SAPPER_PI_BIN` or `--pi-bin` selects the Pi executable. `SAPPER_BIN` retains its legacy Claude meaning. One-shot sessions are stored in private `.sapper-runtime/dispatch-*` directories for inspection.
 
-## Choose a policy
+## Native Pi execution and user controls
 
-The default `readonly` policy allows only `read`, `grep`, `find`, and `ls` tool calls. It denies shell execution, edits, writes, and unknown tools. Sapper itself can still apply validated graph results. This is a tool policy, not a filesystem sandbox. Read tools can access any path available to the process's OS user.
+Sapper adds no tool allowlist or shell hook. Ordinary Pi has shell and file access; bash, write, edit, and custom tools work without a Sapper opt-in, subject to your native tool selection and permission extensions. Managed runs inherit Pi resources: extensions, skills, prompt templates, themes, context/instructions (including `APPEND_SYSTEM.md`), MCP, provider environment, and native project-trust decisions. The bundled extension adds graph context and CLI discovery; an explore prompt supplements rather than replaces your native prompt resources. Sapper does not force offline mode or override Pi telemetry/version settings.
 
-For explicitly authorized work in an isolated environment, pass `--pi-policy autonomous`. It permits the curated built-in tools, including shell execution. For a directly launched interactive Pi with this extension, opt in with `SAPPER_PI_POLICY=autonomous pi ...`. Managed children do not inherit that opt-in; each spawn or dispatch must select its policy explicitly. `--skip-permissions` is rejected for Pi.
+The shared `--skip-permissions` flag is accepted as a **no-op for Pi**: Pi has no equivalent core per-tool approval flag. It does not approve project trust or bypass user permission extensions. Claude still receives `--dangerously-skip-permissions`. The former `--pi-policy`, `SAPPER_PI_POLICY`, and policy command are removed, not alternative modes; remove the obsolete flag from scripts.
 
-Managed Pi runs disable ambient extensions, skills, prompt templates, themes, context files, MCP, and project trust. They load the required policy by absolute extension path and verify its registration before model work. The graph context is bounded and labeled as untrusted data. Unsupported RPC dialogs are cancelled, never approved. There is no interactive approval-forwarding bridge.
+There is no interactive approval-forwarding bridge in this RPC client. If a loaded extension requests `select`, `confirm`, `input`, or `editor`, Sapper sends a cancellation and **fails the run visibly** rather than treating a cancelled interaction as success. This also applies during startup. Notifications may be undisplayed; native custom TUI features are unsupported/degraded by Pi RPC itself. Use interactive Pi or configure the extension's own supported noninteractive behavior when interaction is needed; Sapper does not silently disable extensions or approve dialogs.
 
-The extension, cwd, and trust settings are not an OS sandbox. Autonomous processes can access available credentials and network services, start detached commands, or change their environment. Use a dedicated OS user, container, or VM and restrict mounts and network access. Do not expose host secrets to work that does not need them.
+Neither Sapper nor Pi is an OS sandbox. Ordinary tools and user resources can access available credentials, network services, and files, or launch processes. Use your normal user controls and, where appropriate, a dedicated OS user, container, or VM with suitable mounts/network access. Graph payload validation, intent confirmation, ownership, and explicit budgets still apply; graph context remains bounded and labeled as untrusted data.
 
 ## Run persistent workers
 
@@ -83,7 +83,7 @@ sapper worker down
 
 Message accepts a new business run only while idle or completed. It does not queue, steer, or interrupt an active mission. `peek` reports status, final result, error, session path, mission identity, and timestamps as JSON. A free-text message returns text. `--intent` claims the worker's project-local graph intent, renders the explore template, validates the final JSON payload, and concludes the intent atomically. Only confirmed intents can run.
 
-The current user Pi can act as commander by calling these commands when its policy permits shell use. No unattended strategic commander is implemented. An unattended caller can use this same worker mechanism rather than launching a second unmanaged Pi.
+The current user Pi can act as commander by calling these commands when its native user configuration permits shell use. No unattended strategic commander is implemented. An unattended caller can use this same worker mechanism rather than launching a second unmanaged Pi.
 
 For foreground service management, run `sapper worker serve --max-workers 4 --seconds 3600`. `up` starts that process in the background and waits for readiness. `down` stops new input, clears queues, aborts, closes worker pipes, and waits for the socket to disappear. SIGTERM and SIGINT request the same cleanup. Failed workers are not automatically restarted. The crash restart budget is zero; explicit `resume` is required.
 
@@ -91,7 +91,9 @@ For foreground service management, run `sapper worker serve --max-workers 4 --se
 
 The campaign owns `.sapper-runtime`, which must be mode 0700 and owned by your user. Its socket is mode 0600. Registry and session files stay separate from `.sapper`. Do not share this directory with other users. Sessions may contain sensitive model input and output. Runtime directories are ignored by Git.
 
-The first supervisor start persists an absolute deadline and global worker cap. Restarting with a different `--seconds` or `--max-workers` does not extend or change them. The deadline stops idle workers too. Use a separate campaign directory for a new budget.
+The first supervisor start persists an absolute deadline and your positive-integer global worker cap; there is no extra 32-worker ceiling. Restarting with a different `--seconds` or `--max-workers` does not extend or change them. The deadline stops idle workers too. Use a separate campaign directory for a new budget.
+
+Existing worker registries are migrated under the supervisor lock: only obsolete `settings.policy` is removed, while unrelated fields, sessions, generations, claims, caps, and deadlines are preserved (apart from normal restart status transitions). Unknown execution settings fail without rewriting the registry. No session deletion or reset is needed.
 
 After supervisor death, start it again with `worker up`. Old stdio cannot be reattached. Workers become interrupted and must be resumed explicitly. Resume requires the exact recorded session file and proof that the prior PID is absent. Any live PID, including a reused PID, blocks recovery conservatively. Sapper never signals a prior supervisor's PID. A crash before the child PID was recorded leaves the worker `unresolved`, even when a resumed worker already has a session file. This state blocks resume, stop, claim release, and reuse of its worker capacity across restarts. Inspect the owned runtime and processes rather than guessing which session to open. Sapper cannot automatically prove that an unrecorded child has exited.
 
@@ -109,7 +111,7 @@ Teardown removes only package entries that Sapper setup added. Repeating setup o
 
 ## Legacy boundary
 
-Pi is not supported by `bench`, `sweep`, `command`, or the tmux `fleet` commands. `--backend pi` fails before these commands start work. Their Claude behavior is unchanged. The legacy `docker/commander` scripts reject `SAPPER_BACKEND=pi` before creating files or contacting services. Use `worker` and the small Pi image instead. No benchmark configuration is needed unless you explicitly use arena operations.
+Pi is not supported by `bench`, `sweep`, `command`, or the tmux `fleet` commands. `--backend pi` fails before these commands start work. Their Claude behavior is unchanged. The legacy `docker/commander` scripts reject `SAPPER_BACKEND=pi` before creating files or contacting services. Use `worker` and the small Pi image instead. No benchmark configuration is needed unless you explicitly use arena operations. These are missing backends, not permission restrictions. Pi workers require explicit orchestration; no unattended strategic commander or running `steer`/`follow_up` bridge is implemented. Exact model selection has no Claude-style alias/fallback/key rotation. Pi auto failures are fatal, not silently retried by Sapper. Exact owned sessions, no arbitrary session switching/forking, stale-generation rejection, conservative orphan recovery, and bounded protocol/context sizes remain lifecycle/data invariants, not tool restrictions.
 
 ## Run the small container
 
@@ -132,4 +134,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify_pi.py
 git diff --check
 ```
 
-The integration command uses the installed Pi executable and a deterministic localhost OpenAI-compatible provider. Temporary homes, settings, model configuration, and sessions isolate it from host credentials. It checks policy denial and tool effects, graph context, final results, session resume, worker ownership, and cleanup. It does not contact external models or assessment targets.
+The integration command uses the installed Pi executable and a deterministic localhost OpenAI-compatible provider. Temporary homes, settings, model configuration, and sessions isolate it from host credentials. It checks default bash/write/edit and custom-tool effects through public dispatch and workers, CLI discovery, native resources and append prompts, selected tool configuration and saved project trust, visible dialog failure, graph context, final results, old-registry migration, exact-session resume, worker ownership, caps/deadlines, crash recovery, and cleanup. Isolation and trust configuration exist only in the disposable fixtures, not in the production launcher. It does not contact external models or assessment targets.

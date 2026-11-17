@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 
 scenario = os.environ.get("FAKE_PI_SCENARIO", "ok")
+if os.environ.get("FAKE_PI_CAPTURE"):
+    Path(os.environ["FAKE_PI_CAPTURE"]).write_text(json.dumps(dict(argv=sys.argv, env=dict(os.environ))))
 session = str(Path.cwd() / "fake-session.jsonl")
 if "--session-dir" in sys.argv:
     session = str(Path(sys.argv[sys.argv.index("--session-dir") + 1]) / "fake-session.jsonl")
@@ -37,10 +39,11 @@ for line in sys.stdin.buffer:
     cmd = json.loads(line)
     kind = cmd["type"]
     if kind == "get_state":
+        if scenario == "startup-dialog":
+            emit(dict(type="extension_ui_request", id="dialog", method=os.environ["FAKE_PI_DIALOG"]))
         reply(cmd, dict(sessionFile=session, model=dict(id="local", provider="fixture")))
     elif kind == "get_commands":
-        reply(cmd, dict(commands=[] if scenario == "missing-policy" else [dict(
-            name="sapper-policy", source="extension", description="sapper-policy-v1:" + os.environ.get("SAPPER_PI_POLICY", "readonly"))]))
+        reply(cmd, dict(commands=[]))
     elif kind == "get_available_models":
         reply(cmd, dict(models=[dict(id="local", provider="fixture")]))
     elif kind == "reverse":
@@ -78,7 +81,7 @@ for line in sys.stdin.buffer:
         if scenario == "stderr":
             os.write(2, b"x" * 300000)
         if scenario == "dialog":
-            emit(dict(type="extension_ui_request", id="dialog", method="confirm"))
+            emit(dict(type="extension_ui_request", id="dialog", method=os.environ.get("FAKE_PI_DIALOG", "confirm")))
             continue
         if scenario == "retry":
             assistant("stale", "error")
@@ -91,6 +94,8 @@ for line in sys.stdin.buffer:
         Path(session).parent.mkdir(parents=True, exist_ok=True)
         Path(session).write_text('{"type":"session"}\n')
     elif kind == "extension_ui_response":
+        if os.environ.get("FAKE_PI_DIALOG_CAPTURE"):
+            Path(os.environ["FAKE_PI_DIALOG_CAPTURE"]).write_text(json.dumps(cmd))
         assistant("cancelled" if cmd.get("cancelled") else "approved")
         emit(dict(type="agent_settled", aborted=False))
     else:

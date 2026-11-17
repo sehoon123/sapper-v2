@@ -125,7 +125,7 @@ class PiWorkerTests(unittest.TestCase):
         for seconds in (float("nan"), float("inf"), 0):
             with self.assertRaises(PiError):
                 Supervisor(self.cwd / "invalid", 2, seconds)
-        for cap in (0, 33):
+        for cap in (0, -1, 1.5, True):
             with self.assertRaises(PiError):
                 Supervisor(self.cwd / "invalid", cap, 60)
         runtime = self.cwd / "invalid"
@@ -133,6 +133,74 @@ class PiWorkerTests(unittest.TestCase):
         (runtime / "workers.json").write_text('{"deadline":NaN}')
         with self.assertRaisesRegex(PiError, "persisted"):
             Supervisor(runtime, 2, 60)
+
+    def test_user_capacity_above_32_is_preserved(self):
+        runtime = self.cwd / "large-cap"
+        supervisor = Supervisor(runtime, 33, 60)
+        supervisor.lock.close()
+        supervisor = Supervisor(runtime, 2, 60)
+        try:
+            self.assertEqual(supervisor.cap, 33)
+        finally:
+            supervisor.lock.close()
+
+    def test_obsolete_policy_migration_preserves_registry_and_exact_resume(self):
+        worker = self.spawn()
+        self.supervisor.handle(dict(action="message", id=worker["id"], message="persist session"))
+        self.settle(worker["id"])
+        self.supervisor.handle(dict(action="stop", id=worker["id"]))
+        path = self.supervisor.runtime / "workers.json"
+        saved = json.loads(path.read_text())
+        record = saved["workers"][worker["id"]]
+        record["settings"]["policy"] = "readonly"
+        record["unrelated"] = {"keep": [1, 2]}
+        saved["unrelated"] = "root metadata"
+        path.write_text(json.dumps(saved))
+        session_path = Path(record["session_file"])
+        session_bytes = session_path.read_bytes()
+        intent = self.store.add_intent([self.seed["id"]], "preserve claim until resume", "test")
+        self.store.claim_intent(intent["id"], worker["id"])
+        self.supervisor.lock.close()
+        self.supervisor = Supervisor(self.cwd / ".sapper-runtime", 99, 999)
+        migrated = json.loads(path.read_text())
+        del record["settings"]["policy"]
+        self.assertEqual(migrated, saved)
+        self.assertEqual(session_path.read_bytes(), session_bytes)
+        self.assertEqual(self.store.get_intent(intent["id"])["worker"], worker["id"])
+        resumed = self.supervisor.handle(dict(action="resume", id=worker["id"]))
+        self.assertEqual(resumed["session_file"], str(session_path))
+        self.assertNotEqual(resumed["generation"], record["generation"])
+        self.assertIsNone(resumed["mission"])
+        self.assertNotIn("policy", resumed["settings"])
+        self.assertEqual(json.loads(path.read_text())["workers"][worker["id"]]["unrelated"], record["unrelated"])
+
+    def test_invalid_persisted_settings_are_not_silently_rewritten(self):
+        worker = self.spawn()
+        runtime = self.cwd / "invalid-settings"
+        runtime.mkdir(mode=0o700)
+        worker["settings"].update(policy="readonly", unknown_setting="preserve")
+        path = runtime / "workers.json"
+        original = json.dumps({"workers": {worker["id"]: worker}})
+        path.write_text(original)
+        with self.assertRaisesRegex(PiError, "settings"):
+            Supervisor(runtime, 2, 60)
+        self.assertEqual(path.read_text(), original)
+
+    def test_worker_dialog_fails_and_releases_owned_claim(self):
+        with patch.dict(os.environ, FAKE_PI_SCENARIO="dialog"):
+            worker = self.spawn()
+        intent = self.store.add_intent([self.seed["id"]], "observe", "test")
+        before = self.store.list_facts()
+        try:
+            self.supervisor.handle(dict(action="message", id=worker["id"], intent=intent["id"]))
+        except PiError as exc:
+            self.assertIn("unsupported", str(exc))
+        result = self.settle(worker["id"])
+        self.assertEqual(result.status, "failed")
+        self.assertIn("unsupported", result.error)
+        self.assertEqual(self.store.list_facts(), before)
+        self.assertFalse(self.store.get_intent(intent["id"]).get("worker"))
+        self.assertNotIn(worker["id"], self.supervisor.sessions)
 
     def test_registry_worker_identity_cannot_escape_runtime(self):
         worker = self.spawn()

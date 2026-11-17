@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 import fcntl
 import json
 import math
@@ -88,8 +88,8 @@ def request(runtime, command, timeout=40):
 
 class Supervisor:
     def __init__(self, runtime: Path, cap: int, seconds: float):
-        if cap < 1 or cap > 32 or not math.isfinite(seconds) or seconds <= 0:
-            raise PiError("worker cap must be 1..32 and lifetime must be positive")
+        if type(cap) is not int or cap < 1 or not math.isfinite(seconds) or seconds <= 0:
+            raise PiError("worker cap must be a positive integer and lifetime must be positive")
         self.runtime = private_dir(runtime)
         if len(os.fsencode(self.runtime / "rpc.sock")) >= 100:
             raise PiError("campaign path too long for a portable Unix socket; use a shorter path")
@@ -109,10 +109,20 @@ class Supervisor:
                 raise PiError("invalid worker registry")
             self.cap = saved.get("cap", cap)
             self.deadline = saved.get("deadline", time.time() + seconds)
-            if not isinstance(self.cap, int) or not 1 <= self.cap <= 32 or not isinstance(self.deadline, (int, float)) or not math.isfinite(self.deadline):
+            if type(self.cap) is not int or self.cap < 1 or not isinstance(self.deadline, (int, float)) or not math.isfinite(self.deadline):
                 raise PiError("invalid persisted worker cap or deadline")
-            self.workers = {k: Worker(**v) for k, v in saved.get("workers", {}).items()}
+            self.registry = saved
+            worker_fields = {field.name for field in fields(Worker)}
+            self.workers = {k: Worker(**{name: value for name, value in v.items() if name in worker_fields})
+                            for k, v in saved.get("workers", {}).items()}
             for worker_id, worker in self.workers.items():
+                if not isinstance(worker.settings, dict):
+                    raise PiError("invalid persisted worker settings")
+                worker.settings.pop("policy", None)
+                try:
+                    ExecutionSettings(**worker.settings)
+                except TypeError as exc:
+                    raise PiError(f"invalid persisted worker settings: {exc}") from exc
                 if worker.id != worker_id or re.fullmatch(r"w-[0-9a-f]{16}", worker_id) is None:
                     raise PiError("invalid persisted worker identity")
                 if worker.pid is not None and (not isinstance(worker.pid, int) or worker.pid <= 0):
@@ -128,8 +138,9 @@ class Supervisor:
             raise
 
     def save(self):
-        atomic_json(self.runtime / "workers.json", dict(cap=self.cap, deadline=self.deadline,
-            owner_pid=os.getpid(), workers={k: asdict(v) for k, v in self.workers.items()}))
+        atomic_json(self.runtime / "workers.json", {**self.registry, "cap": self.cap, "deadline": self.deadline,
+            "owner_pid": os.getpid(), "workers": {k: {**self.registry.get("workers", {}).get(k, {}), **asdict(v)}
+                for k, v in self.workers.items()}})
 
     def release_claims(self, worker):
         import sapper
