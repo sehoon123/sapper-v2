@@ -1,6 +1,6 @@
 ---
 name: sapper-setup
-description: Opt-in the CURRENT project to the sapper engagement-graph working memory (offensive specialization of the fact graph). Creates the local .sapper/ graph, registers the SessionStart + UserPromptSubmit hooks in this project's .claude/settings.json (NOT global — other projects are untouched), and writes AGENTS.md teaching typed facts (host/service/cred/vuln/loot/flag), the flag ledger (sapper flag), and the arena bridge (sapper arena). After setup, every turn in this project auto-injects the current graph state and current date output so Claude always knows what's confirmed vs. tried and what time it is; sub-agents (sapper dispatch) can read/write the same graph. For multi-agent tmux work, list panes with sapper peers --discover and ask the user which panes/AI peers may communicate before authorizing any target. Use when the user says "enable sapper here", "在这个项目用 sapper", "setup the engagement graph", or when starting a pentest engagement / CTF challenge / multi-step debugging/research/audit campaign that should be tracked and resumable. For competitions, follow up with `sapper arena init` and set SAPPER_ARENA_TOKEN. This is the per-project initializer the install.sh skill exposes as a slash command.
+description: Set up a project-local Sapper graph for Claude Code with CTF or web/mobile pentest profiles, local hooks, and optional AGENTS.md. Use when the user says "enable sapper here", "在这个项目用 sapper", "setup the engagement graph", or starts an assessment, CTF challenge, or resumable debugging/research task. The install.sh installer exposes this per-project initializer as /sapper-setup.
 license: MIT
 ---
 
@@ -11,10 +11,9 @@ This is the opt-in switch: until you run it in a project, sapper does nothing
 there. After you run it, that one project auto-reads and auto-maintains its
 graph on every turn.
 
-Zero servers — it just drops a local `.sapper/` and writes the two hook
-entries into **this project's** `.claude/settings.json`. For penetration
-engagements, pair it with `sapper arena init` (competition platform config)
-and record findings as typed facts (`-k host/service/cred/vuln/loot/flag`).
+Setup creates a local `.sapper/` and writes two hook entries into this
+project's `.claude/settings.json`. Select the profile explicitly for a real
+assessment. Do not infer authorization or change an existing profile from a goal alone.
 
 ## What it does
 
@@ -44,6 +43,40 @@ sapper setup --goal "reproduce the empty-token crash" --agents
 
 Or, since this is a skill, the user can just type `/sapper-setup <goal>` inside
 Claude Code and Claude will run the equivalent commands.
+
+## Select the assessment profile
+
+Setup without `--profile` preserves the current selection; a new graph defaults to CTF.
+For an existing graph, read `.sapper/project.json` and run `sapper context --instructions`
+before choosing commands. An absent profile means `ctf`. Do not silently convert a project.
+
+For an authorized web or mobile assessment, read `../docs/pentest.md` relative to
+this installed skill's resolved directory. Prepare `engagement.json` with the
+operator's objective, scope, exclusions, environment, window, identities, access,
+methods, and constraints. Record missing prerequisites rather than guessing permission.
+Then explicitly select pentest:
+
+```bash
+sapper setup --profile pentest --engagement engagement.json --goal "Review authorized scope" --agents
+sapper context --instructions
+sapper report
+```
+
+Checks pin immutable engagement revisions. Conclude each check with `-k assessment`
+and an outcome of `vulnerability`, `validated_defense`, `not_observed`, `inconclusive`,
+`blocked`, `not_tested`, or `not_applicable`. Follow the required evidence fields and
+snapshot contract in `sapper context --instructions` and the runnable how-to.
+A failed attempt is not a passed control. Missing device, build, or access evidence
+is a gap, not a safe result. Retests create new linked checks and results without
+replacing prior evidence. Review evidence redaction, cleanup, remediation, and
+remaining unknowns before sharing `sapper report`.
+
+Only for explicitly selected CTF competitions, use `sapper setup --profile ctf`
+and, if the operator authorizes a competition platform, `sapper arena init` with
+`SAPPER_ARENA_TOKEN`. CTF retains the existing host/service/cred/vuln/loot/flag facts
+and flag ledger. Pentest requires no arena credentials, flag capture, or submission.
+Explicit `sapper setup --profile ctf` restores CTF prompts without deleting history.
+Teardown keeps the profile and graph unless `--purge` is requested.
 
 ## Multi-agent tmux authorization flow
 

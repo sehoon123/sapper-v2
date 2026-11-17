@@ -8,7 +8,7 @@ COPY --chown=node:node lib /opt/sapper/lib
 COPY --chown=node:node pi /opt/sapper/pi
 COPY --chown=node:node templates /opt/sapper/templates
 COPY --chown=node:node package.json /opt/sapper/package.json
-COPY --chown=node:node docs/pi.md /opt/sapper/docs/pi.md
+COPY --chown=node:node docs/pi.md docs/pi.ko.md docs/pentest.md /opt/sapper/docs/
 ENV PATH="/opt/sapper/bin:${PATH}" PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 PYTHONDONTWRITEBYTECODE=1
 RUN mkdir /work && chown node:node /work
 WORKDIR /work

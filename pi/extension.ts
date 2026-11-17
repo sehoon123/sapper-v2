@@ -17,8 +17,15 @@ export default function (pi: ExtensionAPI) {
         .filter(Boolean).join("\n\n");
     }
     const content = execFileSync("python3", [resolve(root, "lib/sapper.py"), "context"], {
+      cwd: ctx.cwd, encoding: "utf8", timeout: 5000, maxBuffer: 1048576,
+    }).trim();
+    const instructions = execFileSync("python3", [resolve(root, "lib/sapper.py"), "context", "--instructions"], {
       cwd: ctx.cwd, encoding: "utf8", timeout: 5000, maxBuffer: 65536,
     }).trim();
+    if (instructions && !supplement?.includes(instructions)) {
+      event.systemPromptOptions.appendSystemPrompt = [event.systemPromptOptions.appendSystemPrompt, instructions]
+        .filter(Boolean).join("\n\n");
+    }
     if (content) return { message: { customType: "sapper-graph", content, display: false } };
   });
 }

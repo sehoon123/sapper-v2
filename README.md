@@ -33,6 +33,12 @@ Sapper preserves ordinary Pi execution, including shell/file access and your con
 
 See [the English Pi guide](docs/pi.md) or [한국어 Pi 사용법](docs/pi.ko.md) for provider setup, dispatch, worker management, user controls, and remaining legacy non-parity.
 
+## Web and mobile assessment mode
+
+Use `sapper setup --backend pi --profile pentest --engagement engagement.json --goal "Assess authorized scope"` to select the assessment workflow explicitly. Follow the [runnable assessment how-to](docs/pentest.md) to create the engagement context and a local zero-vulnerability report. [한국어 안내](docs/pi.ko.md) includes a local gap-report example.
+
+Pentest mode drives interactive Pi, workers, dispatch and auto without arena credentials. It records evidence-backed vulnerabilities, validated defenses, bounded negative results and coverage gaps. `sapper report` derives outcomes and retest history from the graph. No findings does not mean safe. Native Pi tools and user controls are unchanged. Existing projects default to CTF, and setup without a profile never converts them.
+
 ## Meet sapper in 60 seconds
 
 https://github.com/user-attachments/assets/1560dc0c-2c92-42b8-a42f-698848fb5878
@@ -56,7 +62,7 @@ orchestrating multiple agents to work as a coordinated force**: scheduling,
 division of labor, communication, shared memory, self-healing. Swap out every
 agent and model — the mechanism still works.
 
-**This project is designed for competition scenarios** (Tencent Intelligent
+**The legacy Docker commander and arena launchers are designed for competition scenarios** (Tencent Intelligent
 Attack-Defense Challenge CTF). If you want to use this mechanism in your own
 scenario (office, research, engineering, any long-horizon cooperative work):
 - **Start from [nvwabase · the Nüwa Foundation](https://github.com/N1nEmAn/nvwabase)** — the general-purpose base with all three capabilities, no pentest doctrine, ready for you to iterate your own division of labor

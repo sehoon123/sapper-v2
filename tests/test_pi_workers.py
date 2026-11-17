@@ -91,6 +91,25 @@ class PiWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.get_intent(intent["id"])["worker"], worker["id"])
         self.assertIsNotNone(self.store.get_intent(intent["id"])["to"])
 
+    def test_pentest_intent_worker_uses_mode_template_and_stores_gap(self):
+        from test_assessment import CONTEXT
+        self.store.configure_profile("pentest", CONTEXT)
+        payload = dict(description="No device", kind="assessment", data=dict(outcome="blocked",
+            asset="org.example.app", conditions="build 1; no device session", limitations="No dynamic check",
+            reason="No authorized device", next_step="Obtain a device"))
+        with patch.dict(os.environ, FAKE_PI_RESULT=json.dumps(dict(accepted=True, data=payload))):
+            worker = self.spawn()
+        intent = self.store.add_intent([self.seed["id"]], "Inspect mobile storage", "test")
+        session = self.supervisor.sessions[worker["id"]][1]
+        with patch.object(session, "begin", wraps=session.begin) as begin:
+            self.supervisor.handle(dict(action="message", id=worker["id"], intent=intent["id"]))
+            self.assertIn("Sapper pentest mode", begin.call_args.args[0])
+            self.assertNotIn("harvest credentials/loot", begin.call_args.args[0])
+        result = self.settle(worker["id"])
+        self.assertEqual(result.status, "completed", result.error)
+        report = sapper.assessment_report(self.store)
+        self.assertEqual(report["outcome_counts"]["blocked"], 1)
+
     def test_deadline_releases_only_owned_claims_and_persists(self):
         with patch.dict(os.environ, FAKE_PI_SCENARIO="timeout"):
             worker = self.spawn()

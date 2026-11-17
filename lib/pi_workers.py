@@ -225,7 +225,7 @@ class Supervisor:
             if intent.get("requires_confirmation") and not intent.get("confirmed_at"):
                 raise PiError("intent requires confirmation")
             text = sapper.render_intent_prompt(store,
-                sapper._load_template(Path(__file__).resolve().parents[1] / "templates", "explore.md"), intent)
+                sapper._load_template(Path(__file__).resolve().parents[1] / "templates", "explore.md", store), intent)
         if not text.strip():
             raise PiError("provide a message or --intent")
         session = owned[1]

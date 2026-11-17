@@ -34,6 +34,21 @@ Global package installation is optional and explicit with `pi install /absolute/
 
 Configure your provider using Pi's `/login`, its supported provider environment variable, or your own `models.json`. Sapper does not configure authentication or rotate Pi keys. `--model` accepts an exact model ID or `provider/id`. Use `--provider` to disambiguate a bare ID. Unknown or ambiguous models fail rather than falling back. Omitting `--model` uses Pi's selected default, never Claude's `sonnet` default or `SAPPER_MODEL`.
 
+## Select a real assessment profile
+
+For web or mobile work, use the [bounded assessment how-to](pentest.md). It includes a runnable local zero-vulnerability example with a validated defense, blocked mobile check and untested coverage.
+
+```sh
+sapper setup --backend pi --profile pentest --engagement engagement.json --goal "Assess authorized scope and document remaining gaps"
+sapper context --instructions
+sapper report
+pi
+```
+
+Create `engagement.json` with the fields in the how-to before running this block. Setup without `--profile` preserves the current selection. Existing graphs without a profile remain CTF. Explicit `--profile ctf` restores CTF prompts without deleting assessment history; teardown keeps the profile and graph. New checks pin the selected engagement revision. Changing context never rewrites old checks or evidence.
+
+The profile covers interactive Pi, free-text and intent workers, dispatch and auto, including complete evidence in verifier prompts. Reports count stored outcomes, not flags or security scores. No findings does not mean safe. Native Pi behavior and operator-supplied engagement limits remain unchanged. The small Pi container includes the assessment guide and templates and needs no arena credentials; the legacy commander container remains CTF-only.
+
 ## Dispatch a step
 
 ```sh

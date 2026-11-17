@@ -6,6 +6,63 @@ Pi로 로컬 프로젝트를 분석하고, Sapper 그래프에 작업 결과를 
 
 보안 점검에는 별도의 대상 승인이 필요합니다. 아래 예시는 로컬 문서 분석만 수행합니다.
 
+## 실제 웹·모바일 점검 모드 선택하기
+
+`pentest` 프로필은 취약점뿐 아니라 검증된 방어 동작, 제한된 미관측 결과, 점검하지 못한 범위를 기록합니다. 기본값은 기존 `ctf`입니다. 프로필을 지정하지 않은 setup은 기존 선택을 바꾸지 않습니다. 이 모드는 Pi 도구 정책이나 샌드박스를 추가하지 않습니다.
+
+아래 예시는 실제 대상이나 모델에 접속하지 않습니다. Sapper 저장소 루트에서 실행하면 임시 디렉터리에 모바일 점검의 차단 사유와 미실행 항목을 기록합니다.
+
+```sh
+export PATH="$PWD/bin:$PATH"
+EXAMPLE_DIR=$(mktemp -d)
+cd "$EXAMPLE_DIR"
+python3 - <<'PY'
+import json
+context = dict(
+    objective="모바일 점검 전제조건과 미확인 범위 기록",
+    scope="로컬 예제 org.example.app; 외부 대상 없음",
+    exclusions="실서비스와 실제 계정 전체",
+    environment="Android 예제; 승인된 빌드와 장치 없음",
+    window="현재 문서 예제 실행 동안",
+    identities="예정된 owner A, reader B; 실제 계정 제공 없음",
+    access="인증 세션, 장치, 프록시 제공 없음",
+    methods="로컬 기록만; 네트워크 테스트 없음",
+    constraints="비밀정보 보관 금지; 실제 대상 접근 금지")
+with open('engagement.json', 'w') as stream:
+    json.dump(context, stream, ensure_ascii=False, indent=2)
+PY
+sapper setup --backend pi --profile pentest --engagement engagement.json --goal "점검 범위와 남은 불확실성을 기록한다"
+sapper intent --from f001 "승인된 Android 빌드의 로컬 저장소 확인"
+sapper done i001 --fact "장치와 빌드가 없어 동적 점검 차단" -k assessment \
+  -d outcome=blocked -d asset=org.example.app \
+  -d conditions='승인된 빌드와 장치 없음; 인증 세션 없음' \
+  -d limitations='저장소, 로그, 백업의 동적 동작은 확인하지 않음' \
+  -d reason='승인된 빌드와 테스트 장치가 필요함' \
+  -d next_step='승인된 빌드와 장치를 확보한 뒤 새 intent로 재점검'
+sapper intent --from f001 "백엔드 API의 테넌트 경계 확인"
+sapper validate
+sapper report
+sapper report --format json > report.json
+python3 - <<'PY'
+import json
+report = json.load(open('report.json'))
+assert report['outcome_counts']['vulnerability'] == 0
+assert report['outcome_counts']['blocked'] == 1
+assert report['outcome_counts']['not_tested'] == 1
+print('취약점 0건은 안전 판정이 아닙니다. 차단 1건과 미실행 1건이 남았습니다.')
+PY
+```
+
+전체 방어 동작 예제와 실행 절차는 [웹·모바일 점검 안내](pentest.md)에 있습니다. 실제 점검 전에는 승인된 자산/API/package/bundle, 제외 범위, 빌드/버전, 시간, 계정/역할/테넌트, 접근 근거, 허용 방법과 운영 제약으로 context를 교체합니다. 장치나 빌드, 프록시가 없으면 `blocked` 또는 `not_tested`이며 안전하다는 뜻이 아닙니다. 정적 관찰과 동적 검증을 구분하고 모바일 클라이언트 동작으로 서버 통제를 추정하지 않습니다.
+
+`validated_defense`는 유효한 기준·비교 사례와 실제 통제 동작의 증거가 필요합니다. 실패한 공격 한 번이나 HTTP 403만으로는 충분하지 않습니다. `not_observed`는 명시된 조건에서 가설이 관측되지 않았다는 제한된 결과입니다. `inconclusive`는 증거가 모호한 경우입니다. `not_applicable`은 자산·설계상 해당하지 않는 이유가 있어야 하며 접근 부족과 다릅니다. `vulnerability`는 위반 증거, 영향, 근본 원인과 개선안을 기록합니다. 심각도와 신뢰도는 결과 상태와 별개입니다.
+
+실제 Pi provider를 설정하고 프로젝트 신뢰를 검토한 뒤 `pi`를 실행합니다. `sapper dispatch reason --backend pi`, `sapper dispatch blindspot --backend pi`, `sapper auto --backend pi --max-steps 2 --max-explore 1`도 같은 프로필을 사용합니다. verifier는 전체 intent, 고정된 context와 결과 문서를 받지만 독립 재현이나 자산 안전성을 보증하지 않습니다. worker 명령은 아래 안내를 따릅니다. 실행 중 steer/follow_up이나 무인 전략 commander는 지원하지 않습니다.
+
+동일 context로 setup을 반복해도 새 context를 만들지 않습니다. context가 바뀌면 새 불변 fact를 만들고, 이전 intent는 이전 context를 유지합니다. 재점검은 원래 결과 fact에 의존하는 새 intent와 새 결과로 남깁니다. 기존 증거를 지우거나 재현 실패를 자동 해결로 처리하지 않습니다. `sapper report`는 미실행 항목과 제외 항목을 구분하며 결과 개수는 고유 위험 개수가 아닙니다. `advisories`에는 blindspot 질문과 auto 검증 이의 등 그래프의 hint를 ID·작성자·시각과 함께 보존합니다. 이 과거 메모는 특정 engagement에 연결되어 있지 않으므로 적용 여부를 검토해야 합니다. 메모를 점검 완료·확정 취약점으로 집계하지 않습니다. 제목만으로 중복을 합치지 않습니다. 저장된 문서가 그대로 보고서에 들어가므로 공유 전에 비밀정보를 제거하고 정리·개선·남은 공백을 검토합니다.
+
+`sapper teardown --backend pi`는 소유한 패키지 등록만 해제하고 그래프와 프로필을 유지합니다. `sapper setup --backend pi --profile ctf`는 명시적으로 CTF 프롬프트로 돌아가며 과거 증거는 보존합니다. 다시 pentest를 선택할 때는 engagement 파일을 지정합니다. 기존 그래프는 자동 변환하지 않습니다. 작은 Pi 컨테이너에는 점검 템플릿과 안내가 포함되며 대회 서버 인증이 필요하지 않습니다. 기존 Docker commander는 CTF 전용입니다.
+
 ## 1. 실행 환경 준비하기
 
 macOS 또는 Linux에서 다음 버전을 사용합니다.

@@ -41,7 +41,18 @@ class Provider(BaseHTTPRequestHandler):
         prompt = json.dumps(messages[prompt_index]["content"], ensure_ascii=False)
         tools = [m for m in messages[prompt_index + 1:] if m["role"] == "tool"]
         tool = None
-        if "VERIFY_NATIVE_" in prompt and ("You are" not in prompt or "You are an executor" in prompt):
+        if "PENTEST_EXECUTOR_FIXTURE" in prompt and "You are an executor" in prompt:
+            text = json.dumps(dict(accepted=True, data=dict(title="Bounded defense",
+                description="Synthetic tenant boundary enforced", kind="assessment",
+                doc="PENTEST_EVIDENCE_SNAPSHOT: authenticated owner receives object; reader in another tenant receives no object; enforcement log rejects before read; no state changed.",
+                data=dict(outcome="validated_defense", asset="fixture /objects/1",
+                    conditions="build 1; local fixture time; authenticated owner A tenant X and reader B tenant Y",
+                    limitations="Only this synthetic object and these identities",
+                    method="Compare owner and cross-tenant reads", expected="Only owner reads object",
+                    observed="Owner receives object, cross-tenant reader gets no object; enforcement log confirms boundary",
+                    comparison="Owner succeeds before and after reader request",
+                    evidence="PENTEST_EVIDENCE_SNAPSHOT in doc", basis="dynamic"))))
+        elif "VERIFY_NATIVE_" in prompt and ("You are" not in prompt or "You are an executor" in prompt):
             tag = re.search(r"VERIFY_NATIVE_(DIRECT|DISPATCH|WORKER)", prompt).group(1).lower()
             steps = [
                 ("bash", dict(command=f"printf shell-ok > {tag}-shell.txt && sapper --version")),
@@ -86,7 +97,9 @@ class Provider(BaseHTTPRequestHandler):
             text = json.dumps(dict(accepted=True, data=dict(blindspots=[dict(area="local",
                 risk="low", question="Is the local fixture deterministic?", suggestion="Run the check")])))
         elif "You are the verifier" in prompt:
-            text = json.dumps(dict(accepted=True, data=dict(verified=True, issues="")))
+            caveat = "PENTEST_EXECUTOR_FIXTURE auto check" in prompt
+            text = json.dumps(dict(accepted=True, data=dict(verified=not caveat,
+                issues="PENTEST_VERIFICATION_CAVEAT: baseline identity needs operator review" if caveat else "")))
         elif "You are an executor" in prompt:
             text = json.dumps(dict(accepted=True, data=dict(title="Local result", description="Observed the deterministic localhost fixture", kind="note")))
         elif "You are the commander" in prompt:
@@ -400,6 +413,90 @@ export default function(pi) {
                     if (runtime / "rpc.sock").exists():
                         worker("down")
                 assert all(not pid_exists(pid) for pid in pids), "owned child process remains"
+                context = dict(objective="PENTEST_CONTEXT_SENTINEL bounded local assessment",
+                    scope="Synthetic API /objects/1 and org.example.app only",
+                    exclusions="All external services", environment="fixture build 1; no mobile device",
+                    window="Local verification run", identities="owner A tenant X; reader B tenant Y",
+                    access="Synthetic authenticated sessions", methods="Local deterministic fixture only",
+                    constraints="No live target traffic; redact all evidence")
+                (cwd / "engagement.json").write_text(json.dumps(context))
+                cli("setup", "--backend", "pi", "--profile", "pentest", "--engagement", "engagement.json")
+                project = json.loads((cwd / ".sapper/project.json").read_text())
+                engagement = project["engagement"]
+                cli("setup", "--backend", "pi", "--profile", "pentest", "--engagement", "engagement.json")
+                assert json.loads((cwd / ".sapper/project.json").read_text()) == project
+
+                def assessment_request():
+                    messages = Provider.requests[-1]["messages"]
+                    system = "\n".join(json.dumps(m["content"]) for m in messages if m["role"] == "system")
+                    assert "Sapper pentest mode" in system, system
+                    assert "NATIVE_APPEND_SENTINEL" in system
+                    transmitted = json.dumps(messages)
+                    assert "PENTEST_CONTEXT_SENTINEL" in transmitted
+                    for unwanted in ("Capture flags immediately", "harvest credentials/loot", "flag submitted", "arena challenges"):
+                        assert unwanted not in transmitted, unwanted
+                    names = {t["function"]["name"] for t in Provider.requests[-1]["tools"]}
+                    assert {"bash", "write", "edit", "fixture_tool"} <= names, names
+
+                native = subprocess.run([executable, "--print", "--no-session", "--model", "fixture/local",
+                    "PENTEST_NATIVE_CONTEXT"], cwd=cwd, capture_output=True, text=True, timeout=30)
+                assert native.returncode == 0, native.stderr
+                assessment_request()
+                for role in ("reason", "blindspot", "brainstorm"):
+                    cli("dispatch", role, *opts)
+                    assessment_request()
+                target = cli("intent", "--from", engagement, "PENTEST_EXECUTOR_FIXTURE check tenant boundary").strip()
+                cli("dispatch", target, "--claim", *opts)
+                assessment_request()
+                cli("dispatch", "verify", "--intent", target, *opts)
+                assessment_request()
+                assert "PENTEST_EVIDENCE_SNAPSHOT" in json.dumps(Provider.requests[-1]["messages"])
+                custom = cwd / "custom-templates/pentest"
+                custom.mkdir(parents=True)
+                (custom / "verify.md").write_text("You are the verifier. Review {intent_description} against {result_description}.")
+                cli("dispatch", "verify", "--intent", target, "--templates", str(custom.parent), *opts)
+                assessment_request()
+                assert "PENTEST_EVIDENCE_SNAPSHOT" in json.dumps(Provider.requests[-1]["messages"])
+                auto_target = cli("intent", "--from", engagement, "PENTEST_EXECUTOR_FIXTURE auto check").strip()
+                cli("claim", auto_target, "--worker", "pi-fixture-auto")
+                with patch.dict(os.environ, SAPPER_WORKER_ID="pi-fixture-auto"):
+                    cli("auto", "--max-steps", "1", "--max-explore", "1", "--verify", "--templates", str(custom.parent), *opts)
+                assessment_request()
+                assert "PENTEST_EVIDENCE_SNAPSHOT" in json.dumps(Provider.requests[-1]["messages"])
+                assert json.loads((cwd / ".sapper/intents" / f"{auto_target}.json").read_text())["to"]
+                worker("up")
+                try:
+                    managed = worker("spawn", "--pi-bin", executable, "--model", "fixture/local")
+                    worker("message", managed["id"], "PENTEST_FREE_TEXT_CONTEXT")
+                    wait_for(lambda: completed(managed["id"]), "assessment free-text worker")
+                    assessment_request()
+                    worker_target = cli("intent", "--from", engagement, "PENTEST_EXECUTOR_FIXTURE worker check").strip()
+                    worker("message", managed["id"], "--intent", worker_target)
+                    wait_for(lambda: completed(managed["id"]), "assessment intent worker")
+                    assessment_request()
+                    assert json.loads((cwd / ".sapper/intents" / f"{worker_target}.json").read_text())["worker"] == managed["id"]
+                finally:
+                    worker("down")
+                gap = cli("intent", "--from", engagement, "Mobile runtime prerequisites").strip()
+                cli("done", gap, "--fact", "No mobile device", "-k", "assessment", "-d", "outcome=blocked",
+                    "-d", "asset=org.example.app", "-d", "conditions=no device/build supplied",
+                    "-d", "limitations=no dynamic coverage", "-d", "reason=missing authorized build/device",
+                    "-d", "next_step=obtain prerequisites and retest")
+                cli("intent", "--from", engagement, "Unexecuted business workflow")
+                cli("validate")
+                report = json.loads(cli("report", "--format", "json"))
+                assert report["outcome_counts"]["vulnerability"] == 0
+                assert report["outcome_counts"]["validated_defense"] == 3
+                assert report["outcome_counts"]["blocked"] == 1
+                assert report["outcome_counts"]["not_tested"] >= 1
+                assert "PENTEST_EVIDENCE_SNAPSHOT" in json.dumps(report)
+                assert any(h["creator"] == "blindspot" for h in report["advisories"])
+                assert any(h["creator"] == "verify" and "PENTEST_VERIFICATION_CAVEAT" in h["content"]
+                           for h in report["advisories"])
+                text_report = cli("report")
+                assert "vulnerability: 0" in text_report
+                assert "PENTEST_VERIFICATION_CAVEAT" in text_report
+                print("PASS pentest native Pi, all dispatch roles, auto, free-text/intent workers, complete verifier evidence and zero-vulnerability report")
                 for _ in range(2):
                     cli("teardown", "--backend", "pi")
                 assert (cwd / ".sapper/project.json").is_file()
