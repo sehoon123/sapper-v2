@@ -30,3 +30,5 @@ HANDOVER.md
 PREP-INTERVIEW.md
 docker/ENV-COMMANDER.md
 COMMANDER-HANDOVER.md
+
+.sapper-runtime/

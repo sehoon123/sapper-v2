@@ -25,6 +25,11 @@
 #     create, guarded sapper init, next free -wN index derived from live panes
 set -o pipefail
 
+if [[ "${SAPPER_BACKEND:-claude}" == "pi" ]]; then
+  echo "Pi is not supported by legacy commander scripts; use sapper worker or docker/pi." >&2
+  exit 2
+fi
+
 ROOT="${SAPPER_ROOT:-/work/runs}"
 LOG="$ROOT/drive.log"
 # Model tiers & gateways (SKILL 4.9, final doctrine): ALL-IN FLAGSHIP.

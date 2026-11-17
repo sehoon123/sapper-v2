@@ -26,6 +26,11 @@
 # re-send worker missions — the commander re-briefs amnesiac panes.
 set -o pipefail
 
+if [[ "${SAPPER_BACKEND:-claude}" == "pi" ]]; then
+  echo "Pi is not supported by legacy commander scripts; use sapper worker or docker/pi." >&2
+  exit 2
+fi
+
 ROOT="${SAPPER_ROOT:-/work/runs}"
 LOG="$ROOT/drive.log"
 # Model tiers (SKILL 4.9): the commander runs SMART; each worker keeps the tier

@@ -1,0 +1,12 @@
+{
+  "name": "sapper-pi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sapper fact graph and managed Pi RPC workers",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./pi/extension.ts"],
+    "skills": ["./pi/skills"]
+  },
+  "peerDependencies": {"@earendil-works/pi-coding-agent": "*"}
+}

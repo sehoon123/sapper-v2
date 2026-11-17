@@ -18,6 +18,11 @@
 #   - invisible logs                             -> drive.log is tailed to stdout (docker logs)
 set -uo pipefail
 
+if [[ "${SAPPER_BACKEND:-claude}" == "pi" ]]; then
+  echo "Pi is not supported by legacy commander scripts; use sapper worker or docker/pi." >&2
+  exit 2
+fi
+
 log() { printf '[sapper-cmd] %s\n' "$*"; }
 die() { printf '[sapper-cmd] FATAL: %s\n' "$*" >&2; exit 1; }
 

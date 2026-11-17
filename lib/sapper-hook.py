@@ -94,17 +94,7 @@ def _find_store_upward(start: Path) -> Path | None:
 def _frontier_block(store_path: Path) -> str:
     store = sapper.Store(store_path)
     try:
-        parts: list[str] = [sapper.render_status(store)]
-        history = sapper.render_history_block(store)
-        if history:
-            parts.append("")  # blank line
-            parts.append(history)
-        text = "\n".join(parts)
-        # cap context size (review H2): long frontiers bloat every turn.
-        MAX = 6000
-        if len(text) > MAX:
-            text = text[:MAX] + "\n... (graph truncated; run `sapper graph` for the full list)"
-        return text
+        return sapper.render_frontier_context(store)
     except Exception as exc:  # never break the user's turn
         return f"(sapper: could not read graph: {exc})"
 

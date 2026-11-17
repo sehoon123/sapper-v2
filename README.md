@@ -15,6 +15,24 @@
 
 **⚠️ AUTHORIZED SECURITY TESTING ONLY — see [DISCLAIMER.md](DISCLAIMER.md).**
 
+## Pi RPC backend
+
+Use Sapper from Pi with a project-local package and persistent workers without tmux or benchmark credentials. Requires Python 3.10+, Node.js 22.19+, Pi 1.4.0, and a configured Pi provider.
+
+```sh
+git clone --branch feat/pi-rpc https://github.com/sehoon123/sapper-v2.git
+cd sapper-v2
+export PATH="$PWD/bin:$PATH"
+cd /path/to/your-project
+sapper setup --backend pi --goal "Document the local project"
+sapper status
+pi --approve
+```
+
+Review the package and project configuration before using `--approve`. This starts Pi with Sapper's read-only tool policy. It does not grant shell or edit access. The Python graph and Claude backend remain available.
+
+See [the English Pi guide](docs/pi.md) or [한국어 Pi 사용법](docs/pi.ko.md) for provider setup, dispatch, worker management, and isolation requirements.
+
 ## Meet sapper in 60 seconds
 
 https://github.com/user-attachments/assets/1560dc0c-2c92-42b8-a42f-698848fb5878
